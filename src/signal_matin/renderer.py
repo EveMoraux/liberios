@@ -6,11 +6,13 @@ uniquement un ``MorningEdition`` valide et produit un document autonome.
 from __future__ import annotations
 
 import base64
+import re
 import datetime as dt
 import html
 import mimetypes
 from pathlib import Path
 
+from .citations_pop import citation_du_jour
 from .models import (
     AgendaItem, DensityMode, DigestItem, MorningEdition, NewsItem,
     Recommendation, TaskItem,
@@ -192,6 +194,15 @@ def task_list(title: str, items: list[TaskItem], limit: int = 6) -> str:
     return f'<section class="task-block">{section_header(title)}<ol class="numbered-list">{"".join(rows)}</ol></section>'
 
 
+def _title(item: NewsItem, limit: int) -> str:
+    """Titre cliquable vers l'article d'origine quand le flux fournit un lien."""
+    text = _e(_truncate(item.title, limit))
+    url = getattr(item.source, "url", None) or getattr(item, "url", None)
+    if not url:
+        return text
+    return f'<a class="read-more" href="{_e(str(url))}" target="_blank" rel="noopener">{text}</a>'
+
+
 def _source_line(item: NewsItem) -> str:
     source = item.source
     published = source.published_at.astimezone().strftime("%H:%M") if source.published_at else ""
@@ -207,7 +218,7 @@ def news_lead(item: NewsItem | None, summary_limit: int = 520) -> str:
     return f"""
     <article class="news-lead">
       <p class="article-meta">{_source_line(item)}</p>
-      <h2>{_e(_truncate(item.title, 150))}</h2>
+      <h2>{_title(item, 150)}</h2>
       {illustration_block(item)}
       <p class="standfirst">{_e(_truncate(item.summary, summary_limit))}</p>
     </article>
@@ -219,7 +230,7 @@ def news_card(item: NewsItem, summary_limit: int = 280, compact: bool = False) -
     return f"""
     <article class="news-card" data-importance="{item.importance.value}">
       <p class="article-meta">{_source_line(item)}</p>
-      <h3>{_e(_truncate(item.title, 120))}</h3>
+      <h3>{_title(item, 120)}</h3>
       {summary}
     </article>
     """
@@ -229,7 +240,7 @@ def news_feature(item: NewsItem, summary_limit: int = 420) -> str:
     return f"""
     <article class="news-feature" data-importance="{item.importance.value}">
       <p class="article-meta">{_source_line(item)}</p>
-      <h2>{_e(_truncate(item.title, 150))}</h2>
+      <h2>{_title(item, 150)}</h2>
       <p class="feature-summary">{_e(_truncate(item.summary, summary_limit))}</p>
     </article>
     """
@@ -276,7 +287,7 @@ def news_briefs(items: list[NewsItem], limit: int = 5) -> str:
     if not items:
         return ""
     return f'<section class="briefs">{section_header("En bref")}<div class="brief-list">' + "".join(
-        news_card(item, summary_limit=105) for item in items[:limit]
+        news_card(item, summary_limit=260) for item in items[:limit]
     ) + "</div></section>"
 
 
@@ -290,7 +301,7 @@ def detailed_brief(item: NewsItem, *, featured: bool = False) -> str:
     return f"""
     <article class="brief-detail{' is-featured' if featured else ''}">
       <p class="article-meta">{_source_line(item)}</p>
-      <{title_tag}>{_e(_truncate(item.title, 190))}</{title_tag}>
+      <{title_tag}>{_title(item, 190)}</{title_tag}>
       <div class="brief-copy">{paragraphs}</div>
     </article>
     """
@@ -305,7 +316,7 @@ def dossier_story(
     return f"""
     <article class="dossier-story{' is-featured' if featured else ''}">
       <p class="article-meta">{_source_line(item)}</p>
-      <h2>{_e(_truncate(item.title, 180))}</h2>
+      <h2>{_title(item, 180)}</h2>
       <div class="dossier-copy">{paragraphs}</div>
     </article>
     """
@@ -365,6 +376,26 @@ def front_footer_band(edition: MorningEdition) -> str:
     return '<section class="front-footer-band">' + "".join(pieces) + "</section>" if pieces else ""
 
 
+def front_contents(edition: MorningEdition) -> str:
+    """Sommaire de la une : les rubriques et leur volume, sans repeter d'article."""
+    secondary = len(edition.news.all_secondary())
+    rows = [
+        ("En bref, en detail", "Les sujets du jour", min(secondary, FRONT_BRIEF_LIMIT)),
+        ("Actualites & monde", "Sante, e-sante, Montpellier", max(0, secondary - FRONT_BRIEF_LIMIT)),
+        ("Technologie & IA", "IA, numerique, TLDR", len(edition.tech_news)),
+        ("Veille & curiosite", "Sciences et culture", len(edition.curiosity_news)),
+        ("Ta journee", "Agenda, taches, carnet", None),
+        ("La pause du matin", "Mots croises, calcul, vocabulaire", None),
+    ]
+    items = "".join(
+        f'<li data-target="{_e(label)}"><strong>{_e(label.replace("curiosite", "curiosites"))}</strong>'
+        f'<span>{_e(hint)}{f" · {count} article{chr(115) if count > 1 else chr(32)}".rstrip() if count else ""}</span>'
+        f'<em class="toc-page"></em></li>'
+        for label, hint, count in rows if count is None or count > 0
+    )
+    return f'<nav class="front-contents">{section_header("Au sommaire", "Dans ce numero")}<ol>{items}</ol></nav>'
+
+
 def front_pause(edition: MorningEdition) -> str:
     pieces: list[str] = []
     if edition.personal.free_window:
@@ -385,33 +416,21 @@ def continuation_news(title: str, items: list[NewsItem], limit: int = 5) -> str:
         return ""
     cards = "".join(
         f'<article><p class="article-meta">{_source_line(item)}</p>'
-        f'<h3>{_e(_truncate(item.title, 105))}</h3>'
+        f'<h3>{_title(item, 105)}</h3>'
         f'<p>{_e(_truncate(item.summary, 145))}</p></article>'
         for item in items[:limit]
     )
     return f'<section class="continuation-news">{section_header(title)}<div>{cards}</div></section>'
 
 
-def curiosity_engraving() -> str:
-    return """
-    <figure class="curiosity-engraving" aria-label="Illustration au trait de livres, d'une plante et d'un crayon">
-      <svg viewBox="0 0 720 155" role="img">
-        <g fill="none" stroke="#242422" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M55 122 H665" stroke="#85857f" stroke-width="1.2"/>
-          <path d="M86 94 H270 L250 119 H66 Z" fill="#f6f5f0"/>
-          <path d="M105 65 H287 L270 94 H86 Z" fill="#fbfaf6"/>
-          <path d="M118 39 H304 L287 65 H105 Z" fill="#f0efe9"/>
-          <path d="M130 47 H278 M118 73 H260 M95 102 H240" stroke="#85857f" stroke-width="1.2"/>
-          <path d="M389 116 C380 88 381 56 397 24 M398 26 C419 34 431 49 434 68 M396 46 C377 51 363 62 354 78 M404 67 C425 70 441 83 450 100"/>
-          <path d="M397 25 C381 15 364 20 356 34 C373 40 387 36 397 25 Z" fill="#d8d7d1"/>
-          <path d="M433 68 C451 60 468 65 478 81 C460 86 445 81 433 68 Z" fill="#d8d7d1"/>
-          <path d="M353 78 C334 72 318 78 309 94 C328 98 343 92 353 78 Z" fill="#d8d7d1"/>
-          <path d="M365 118 H430 L421 87 H374 Z" fill="#f8f7f2"/>
-          <path d="M506 112 L635 42 L650 53 L521 123 Z" fill="#f8f7f2"/>
-          <path d="M635 42 L663 29 L650 53 M524 115 L515 131 L506 112"/>
-          <circle cx="606" cy="41" r="23" stroke="#85857f" stroke-width="1.2"/>
-        </g>
-      </svg>
+def curiosity_engraving(edition: MorningEdition | None = None, slot: int = 0) -> str:
+    """Citation du jour : replique culte (jeu video, film, serie, culture geek)."""
+    day = edition.edition.date if edition else dt.date.today()
+    text, who, work, year, kind = citation_du_jour(day, slot)
+    return f"""
+    <figure class="day-quote">
+      <blockquote>« {_e(text)} »</blockquote>
+      <figcaption>— {_e(who)}, <cite>{_e(work)}</cite> ({year})<span>{_e(kind)}</span></figcaption>
     </figure>
     """
 
@@ -538,9 +557,10 @@ def _page_one(edition: MorningEdition) -> str:
         task_list("Priorites", edition.priorities, 4),
         task_list("A ne pas oublier", edition.reminders, 3),
     ]))
-    right = news_lead(edition.news.lead, 360) + news_briefs(secondary, FRONT_BRIEF_LIMIT)
+    # LibERIOS : chaque article n'apparait qu'une fois. Les bref et l'IA ont leurs
+    # propres pages ; la une garde l'article principal et la citation du jour.
+    right = news_lead(edition.news.lead, 360) + front_contents(edition)
     right += '<div class="front-lower">'
-    right += digest_list("IA & tech", edition.tech, 1)
     right += social_digest(edition, 1) or front_watch(edition.watch, 2)
     right += '</div>'
     right += front_pause(edition)
@@ -562,7 +582,7 @@ def _page_briefs_detail(
 ) -> str:
     if not items:
         return ""
-    eyebrow = "Les sujets annonces en une" if part == 1 else "La suite du cahier d actualites"
+    eyebrow = "Les sujets du jour" if part == 1 else "La suite du cahier d actualites"
     body = section_header("En bref, en detail", eyebrow)
     if len(items) > BRIEF_DETAIL_PAGE_LIMIT:
         short_page = sum(map(_story_weight, items)) < 3600
@@ -570,7 +590,7 @@ def _page_briefs_detail(
         body += "".join(detailed_brief(item) for item in items)
         body += "</div>"
         if short_page:
-            body += '<div class="briefs-detail-floor">' + curiosity_engraving() + "</div>"
+            body += '<div class="briefs-detail-floor">' + curiosity_engraving(edition, 0) + "</div>"
     else:
         body += '<div class="briefs-detail-layout">'
         body += detailed_brief(items[0], featured=True)
@@ -607,7 +627,7 @@ def _page_news(
     else:
         body += '<p class="empty-state">Aucune actualite disponible : aucun flux n\'a pu etre lu. Cette rubrique reste volontairement vide et aucun article n\'est invente.</p>'
     if not continuation:
-        body += news_context_block(edition)
+        body += news_context_block(edition, include_lead=False)
     slug = "news news-continuation-short" if roomy else "news"
     return _page(edition, number, title, body, slug=slug)
 
@@ -617,7 +637,8 @@ def _pages_news(
 ) -> list[str]:
     remaining = edition.news.all_secondary()[start:]
     if not remaining:
-        return [_page_news(edition, number, items=[])]
+        # La une affiche deja l'article principal : pas de page qui le repete.
+        return [] if edition.news.lead else [_page_news(edition, number, items=[])]
     pages = []
     for offset in range(0, len(remaining), NEWS_PAGE_LIMIT):
         pages.append(_page_news(
@@ -705,7 +726,7 @@ def _page_tech_continuation(
     )
     body += "</div>"
     if 3 <= len(items) <= 4 and sum(map(_story_weight, items)) < 2800:
-        body += '<div class="continuation-art-floor">' + curiosity_engraving() + "</div>"
+        body += '<div class="continuation-art-floor">' + curiosity_engraving(edition, 1) + "</div>"
     return _page(
         edition,
         number,
@@ -755,12 +776,12 @@ def _page_curiosity(edition: MorningEdition, number: int) -> str:
     body += social_digest(edition, 4)
     body += '</div>'
     if edition.curiosity_news and sum(map(_story_weight, edition.curiosity_news[:4])) < 2400:
-        body += '<div class="curiosity-art-floor">' + curiosity_engraving() + "</div>"
+        body += '<div class="curiosity-art-floor">' + curiosity_engraving(edition, 2) + "</div>"
     if not edition.curiosity_news and not any((
         edition.watch, edition.newsletter_digest, edition.recommendations,
         edition.social_digest, edition.community_digest,
     )):
-        body += curiosity_engraving()
+        body += curiosity_engraving(edition, 3)
     return _page(edition, number, "Veille & curiosite", body, slug="curiosity")
 
 
@@ -786,7 +807,7 @@ def _page_curiosity_continuation(
     )
     body += "</div>"
     if 3 <= len(items) <= 4 and sum(map(_story_weight, items)) < 2800:
-        body += '<div class="continuation-art-floor">' + curiosity_engraving() + "</div>"
+        body += '<div class="continuation-art-floor">' + curiosity_engraving(edition, 4) + "</div>"
     return _page(
         edition,
         number,
@@ -910,7 +931,7 @@ def _page_compact(edition: MorningEdition, number: int, start: int = 0) -> str:
     extras = extras_block(edition, limit=2)
     body += extras
     if not extras:
-        body += '<div class="compact-art-floor">' + curiosity_engraving() + '</div>'
+        body += '<div class="compact-art-floor">' + curiosity_engraving(edition, 5) + '</div>'
     return _page(edition, number, "La suite du matin", body, slug="compact-tail")
 
 
@@ -932,7 +953,7 @@ def _page_standard_tail(edition: MorningEdition, number: int) -> str:
     body += digest_list("Boite de reception", edition.newsletter_digest, 3)
     body += '</div></div>'
     if sparse:
-        body += '<div class="standard-tail-floor">' + curiosity_engraving() + '</div>'
+        body += '<div class="standard-tail-floor">' + curiosity_engraving(edition, 6) + '</div>'
     body += extras_block(edition, limit=3)
     return _page(edition, number, "Journee & liens", body, slug="standard-tail")
 

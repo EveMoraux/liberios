@@ -1,0 +1,189 @@
+<!-- Couche web LibERIOS, injectee dans chaque numero par scripts/preparer_edition.py.
+     Rend modifiables le carnet, le brouillon, les mots croises et cache les reponses.
+     Les valeurs sont confiees a la page parente (liste des jours), qui les enregistre. -->
+<style>
+@media screen {
+  .sheet { height: auto !important; min-height: 297mm; overflow: visible !important; }
+  .page-content { height: auto !important; min-height: 258mm; overflow: visible !important; }
+  .lw-area {
+    display: block; width: 100%; box-sizing: border-box; resize: vertical;
+    border: 0; outline: none; background-color: transparent; color: inherit;
+    font: 11pt/10.5mm var(--serif, Georgia, serif); padding: 0 1mm;
+    background-image: linear-gradient(to bottom, transparent calc(10.5mm - 1px), var(--shade, #ccc) calc(10.5mm - 1px));
+    background-size: 100% 10.5mm; background-attachment: local;
+  }
+  .lw-area:focus-visible { box-shadow: 0 0 0 1px var(--ink, #222); }
+  .writing-lines.lw-done, .scratch-grid.lw-done { height: auto !important; background: none; }
+  .lw-scratch { min-height: 40mm; font-family: var(--sans, sans-serif); font-size: 10pt; }
+  .crossword-cell { position: relative; }
+  .crossword-cell input {
+    position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
+    border: 0; background: transparent; text-align: center; text-transform: uppercase;
+    font: 600 11pt/1 var(--sans, sans-serif); color: var(--ink, #111); padding: 1.6mm 0 0;
+  }
+  .crossword-cell input:focus { outline: 2px solid var(--ink, #111); outline-offset: -2px; background: rgba(0,0,0,.04); }
+  .lw-reveal {
+    font: inherit; font-size: 7pt; letter-spacing: .05em; text-transform: uppercase;
+    background: none; border: var(--hairline, 1px) solid currentColor; border-radius: 2mm;
+    padding: .6mm 2mm; cursor: pointer; color: var(--muted, #666);
+  }
+  .lw-reveal:hover, .lw-reveal:focus-visible { color: var(--ink, #111); }
+  .lw-answer-input {
+    font: inherit; font-size: 9pt; width: 100%; box-sizing: border-box; margin: 1.5mm 0;
+    border: 0; border-bottom: var(--hairline, 1px) solid var(--shade, #ccc); background: transparent; color: inherit; padding: .8mm 0;
+  }
+  .lw-hidden { display: none !important; }
+  .lw-check { margin-left: 2mm; font-size: 7pt; color: var(--muted, #666); }
+}
+@media print { .lw-reveal, .lw-answer-input { display: none; } }
+</style>
+<script>
+(function () {
+  "use strict";
+  var values = {};
+  var fields = {};
+  var timer = null;
+
+  function send(msg) {
+    try { window.parent.postMessage(msg, location.origin); } catch (e) {}
+  }
+  function changed(key, value) {
+    values[key] = value;
+    clearTimeout(timer);
+    timer = setTimeout(function () { send({ type: "liberios-save", values: values }); }, 700);
+  }
+  function bind(key, el) {
+    fields[key] = el;
+    el.addEventListener("input", function () { changed(key, el.value); });
+  }
+
+  // Carnet du jour : les lignes deviennent une zone de texte lignee.
+  document.querySelectorAll(".notes-space .writing-lines").forEach(function (box, i) {
+    var area = document.createElement("textarea");
+    area.className = "lw-area";
+    area.rows = 8;
+    area.id = "carnet-" + i;
+    area.setAttribute("aria-label", "Carnet du jour");
+    area.placeholder = "Notes, idées, choses à retenir…";
+    box.innerHTML = "";
+    box.classList.add("lw-done");
+    box.appendChild(area);
+    bind("carnet-" + i, area);
+  });
+
+  // Zone de brouillon.
+  document.querySelectorAll(".scratch-grid").forEach(function (box, i) {
+    var area = document.createElement("textarea");
+    area.className = "lw-area lw-scratch";
+    area.id = "brouillon-" + i;
+    area.setAttribute("aria-label", "Zone de brouillon");
+    area.placeholder = "Calculs, essais, mots trouvés…";
+    box.classList.add("lw-done");
+    box.appendChild(area);
+    bind("brouillon-" + i, area);
+  });
+
+  // Mots croises : une case = un champ d'une lettre, on avance tout seul.
+  document.querySelectorAll(".crossword-grid").forEach(function (grid, g) {
+    var rows = grid.querySelectorAll("tr");
+    var inputs = [];
+    rows.forEach(function (tr, r) {
+      tr.querySelectorAll("td").forEach(function (td, c) {
+        if (!td.classList.contains("crossword-cell")) return;
+        var input = document.createElement("input");
+        input.maxLength = 1;
+        input.autocomplete = "off";
+        input.id = "mc-" + g + "-" + r + "-" + c;
+        input.setAttribute("aria-label", "Case ligne " + (r + 1) + ", colonne " + (c + 1));
+        input.dataset.r = r; input.dataset.c = c;
+        td.appendChild(input);
+        inputs.push(input);
+        bind(input.id, input);
+      });
+    });
+    var dir = "across";
+    function at(r, c) { return grid.querySelector("#mc-" + g + "-" + r + "-" + c); }
+    inputs.forEach(function (input) {
+      input.addEventListener("focus", function () { input.select(); });
+      input.addEventListener("input", function () {
+        input.value = input.value.toUpperCase();
+        changed(input.id, input.value);
+        if (!input.value) return;
+        var r = +input.dataset.r, c = +input.dataset.c;
+        var next = dir === "across" ? at(r, c + 1) : at(r + 1, c);
+        if (!next) { dir = dir === "across" ? "down" : "across"; next = dir === "across" ? at(r, c + 1) : at(r + 1, c); }
+        if (next) next.focus();
+      });
+      input.addEventListener("keydown", function (e) {
+        var r = +input.dataset.r, c = +input.dataset.c, move = null;
+        if (e.key === "ArrowRight") { move = at(r, c + 1); dir = "across"; }
+        if (e.key === "ArrowLeft") { move = at(r, c - 1); dir = "across"; }
+        if (e.key === "ArrowDown") { move = at(r + 1, c); dir = "down"; }
+        if (e.key === "ArrowUp") { move = at(r - 1, c); dir = "down"; }
+        if (e.key === "Backspace" && !input.value) { move = dir === "across" ? at(r, c - 1) : at(r - 1, c); }
+        if (move) { e.preventDefault(); move.focus(); }
+      });
+    });
+  });
+
+  // Solutions et reponses : cachees jusqu'au clic.
+  function hideBehindButton(el, label) {
+    el.classList.add("lw-hidden");
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "lw-reveal";
+    btn.textContent = label;
+    btn.setAttribute("aria-expanded", "false");
+    btn.addEventListener("click", function () {
+      var open = el.classList.toggle("lw-hidden") === false;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.textContent = open ? "Masquer" : label;
+    });
+    el.parentNode.insertBefore(btn, el);
+  }
+  document.querySelectorAll(".crossword-solution").forEach(function (el) {
+    hideBehindButton(el, "Voir les solutions");
+  });
+  document.querySelectorAll(".quiz small, .math-card small").forEach(function (el, i) {
+    var input = document.createElement("input");
+    input.className = "lw-answer-input";
+    input.id = "reponse-" + i;
+    input.placeholder = "Votre réponse";
+    input.setAttribute("aria-label", "Votre réponse");
+    el.parentNode.insertBefore(input, el);
+    bind(input.id, input);
+    hideBehindButton(el, "Voir la réponse");
+  });
+
+  // Sommaire de la une : numero de page et lien vers chaque rubrique.
+  document.querySelectorAll(".front-contents li[data-target]").forEach(function (li) {
+    var target = li.getAttribute("data-target");
+    var sheet = Array.prototype.find.call(document.querySelectorAll(".sheet[data-label]"), function (s) {
+      return s.getAttribute("data-label") === target;
+    });
+    if (!sheet) { li.classList.add("lw-hidden"); return; }
+    if (!sheet.id) sheet.id = "rubrique-" + sheet.getAttribute("data-page");
+    var page = li.querySelector(".toc-page");
+    if (page) page.textContent = "p. " + sheet.getAttribute("data-page");
+    var link = document.createElement("a");
+    link.href = "#" + sheet.id;
+    while (li.firstChild) link.appendChild(li.firstChild);
+    link.style.display = "contents";
+    li.appendChild(link);
+  });
+
+  // Echange avec la page parente (qui enregistre).
+  window.addEventListener("message", function (e) {
+    if (e.origin !== location.origin || !e.data || e.data.type !== "liberios-values") return;
+    var saved = e.data.values || {};
+    Object.keys(saved).forEach(function (key) {
+      var el = fields[key];
+      if (el && typeof saved[key] === "string" && document.activeElement !== el) {
+        el.value = saved[key];
+        values[key] = saved[key];
+      }
+    });
+  });
+  send({ type: "liberios-ready" });
+})();
+</script>

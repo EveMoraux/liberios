@@ -1,0 +1,178 @@
+<title>LibERIOS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* Mise en page : bandeau de titre + réglette des numéros, puis le journal du jour en pleine hauteur */
+:root {
+  --paper: #f3f2ee;
+  --ink: #1d1f1c;
+  --muted: #6a6e66;
+  --rule: #d4d3cc;
+  --chip: #e6e5df;
+  --accent: #2f3437;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #191a18; --ink: #ecebe6; --muted: #a2a59c; --rule: #34362f; --chip: #262823; --accent: #ecebe6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #191a18; --ink: #ecebe6; --muted: #a2a59c; --rule: #34362f; --chip: #262823; --accent: #ecebe6;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--font-ui);
+  display: flex; flex-direction: column;
+}
+header {
+  display: flex; flex-direction: column; gap: 10px;
+  padding-block: 14px 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--rule);
+}
+.mast { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1.6rem; letter-spacing: -0.01em; }
+.count { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.04em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.meta { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.save { color: var(--muted); font-size: 0.8rem; }
+nav { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+nav button {
+  flex: 0 0 auto; font: inherit; font-size: 0.85rem; font-variant-numeric: tabular-nums;
+  background: var(--chip); color: var(--ink); border: 1px solid transparent;
+  border-radius: 999px; padding: 5px 12px; cursor: pointer;
+}
+nav button:hover { border-color: var(--rule); }
+nav button[aria-current="true"] { background: var(--accent); color: var(--paper); }
+nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main { flex: 1; min-height: 0; display: flex; }
+iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+.empty { margin: auto; padding: 24px; color: var(--muted); text-align: center; max-width: 40ch; }
+</style>
+
+<header>
+  <div class="mast">
+    <h1>LibERIOS</h1>
+    <span class="meta"><span class="count" id="count">Chargement des numéros…</span><span class="save" id="save" role="status" aria-live="polite"></span></span>
+  </div>
+  <nav id="days" aria-label="Numéros précédents"></nav>
+</header>
+<main id="main">
+  <p class="empty" id="empty">Le numéro du jour s'affiche ici dès qu'il est chargé.</p>
+</main>
+
+<script>
+(function () {
+  var nav = document.getElementById("days");
+  var main = document.getElementById("main");
+  var count = document.getElementById("count");
+  var days = [];
+  var frame = null;
+  var fmt = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+
+  function label(d, i) {
+    var text = fmt.format(new Date(d + "T00:00:00Z"));
+    return i === 0 ? "Aujourd'hui · " + text : text;
+  }
+
+  function show(day) {
+    if (days.indexOf(day) < 0) day = days[0];
+    if (!frame) {
+      main.innerHTML = "";
+      frame = document.createElement("iframe");
+      frame.title = "Numéro LibERIOS";
+      main.appendChild(frame);
+    }
+    frame.dataset.day = day;
+    frame.src = "editions/" + day + ".html";
+    status.textContent = "";
+    Array.prototype.forEach.call(nav.children, function (b) {
+      b.setAttribute("aria-current", b.dataset.day === day ? "true" : "false");
+    });
+    if (location.hash.slice(1) !== day && day !== days[0]) location.hash = day;
+  }
+
+  /* ---- Notes du jour (carnet, brouillon, grille) : privées, une fiche par numéro ---- */
+  var status = document.getElementById("save");
+  var store = null;       // fiche du compte, ou null -> navigateur seulement
+  var storeReady = (async function () {
+    try {
+      if (!window.claude || !window.claude.use) return null;
+      var db = await window.claude.use("db");
+      var user = await window.claude.use("user");
+      var uid = user && await user.id();
+      if (!db || !uid) return null;
+      return db.collection("data/users/" + uid);
+    } catch (e) { return null; }
+  })();
+  function currentDay() {
+    return frame && frame.dataset.day;
+  }
+  function localKey(day) { return "liberios-notes-" + day; }
+  async function loadNotes(day) {
+    store = await storeReady;
+    if (store) {
+      try {
+        var snap = await store.doc("notes-" + day).get();
+        var data = snap.exists ? snap.data() : null;
+        return (data && data.values) || {};
+      } catch (e) { /* on retombe sur le navigateur */ }
+    }
+    try { return JSON.parse(localStorage.getItem(localKey(day)) || "{}"); } catch (e) { return {}; }
+  }
+  var saving = Promise.resolve();
+  function saveNotes(day, values) {
+    status.textContent = "Enregistrement…";
+    saving = saving.then(async function () {
+      var ok = false;
+      if (store) {
+        try { await store.doc("notes-" + day).set({ day: day, values: values, updatedAt: new Date().toISOString() }); ok = true; }
+        catch (e) { ok = false; }
+      }
+      try { localStorage.setItem(localKey(day), JSON.stringify(values)); if (!store) ok = true; } catch (e) {}
+      status.textContent = ok
+        ? (store ? "Notes enregistrées" : "Notes gardées sur cet appareil")
+        : "Notes non enregistrées : vérifiez la connexion";
+    });
+  }
+  window.addEventListener("message", function (e) {
+    if (!frame || e.source !== frame.contentWindow || e.origin !== location.origin || !e.data) return;
+    var day = currentDay();
+    if (e.data.type === "liberios-ready") {
+      loadNotes(day).then(function (values) {
+        if (currentDay() === day) frame.contentWindow.postMessage({ type: "liberios-values", values: values }, location.origin);
+      });
+    } else if (e.data.type === "liberios-save" && e.data.values && typeof e.data.values === "object") {
+      saveNotes(day, e.data.values);
+    }
+  });
+
+  fetch("editions.json", { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(function (list) {
+      days = list.filter(function (d) { return /^\d{4}-\d{2}-\d{2}$/.test(d); }).sort().reverse();
+      if (!days.length) throw new Error("vide");
+      count.textContent = days.length + (days.length > 1 ? " numéros" : " numéro");
+      days.forEach(function (d, i) {
+        var b = document.createElement("button");
+        b.type = "button"; b.dataset.day = d; b.textContent = label(d, i);
+        b.addEventListener("click", function () {
+          if (i === 0) { history.replaceState(null, "", location.pathname); show(d); }
+          else location.hash = d;
+        });
+        nav.appendChild(b);
+      });
+      show(location.hash.slice(1));
+      window.addEventListener("hashchange", function () { show(location.hash.slice(1)); });
+    })
+    .catch(function () {
+      count.textContent = "";
+      document.getElementById("empty").textContent = "Aucun numéro n'est encore publié. Le premier arrive avec la prochaine mise à jour du matin.";
+    });
+})();
+</script>

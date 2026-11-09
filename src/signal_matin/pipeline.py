@@ -84,6 +84,11 @@ def build_live(
     else:
         statuses.append(_disabled("Agenda"))
     agenda.sort(key=lambda item: item.start or now)
+    # Un meme rendez-vous present deux fois dans le calendrier n'est affiche qu'une fois.
+    _seen_events: set[tuple] = set()
+    agenda = [e for e in agenda
+              if (e.start, e.title.strip().casefold()) not in _seen_events
+              and not _seen_events.add((e.start, e.title.strip().casefold()))]
 
     if _enabled(config, "tasks"):
         priorities, reminders, task_status = collect_tasks(setting(config, "tasks", {}) or {})
@@ -117,10 +122,13 @@ def build_live(
         title=item.title, summary=item.summary, source=item.source,
         importance=item.importance,
     ) for item in tech_news]
+    curiosity_categories = {"science", "sciences", "culture"}
     curiosities = [
         item for item in news_items
-        if item.category.casefold() in {"science", "sciences", "culture"}
+        if item.category.casefold() in curiosity_categories
     ][:4]
+    # Un article de « Veille & curiosites » ne revient pas dans les actualites.
+    news_items = [item for item in news_items if item not in curiosities]
     recommendations = (
         _recommendations(setting(config, "recommendations", []) or [])
         if _enabled(config, "recommendations") else []

@@ -1,0 +1,110 @@
+# Configuration de base de LibERIOS.
+# Ne pas modifier config.yaml directement : il est regenere chaque matin
+# a partir de ce fichier + des taches de « Mon suivi » (page Bonjour)
+# par scripts/bonjour_taches.py.
+# Le lien Outlook est secret : il n'est jamais ecrit ici (voir OUTLOOK_ICS_URL).
+demo: false
+
+paper:
+  title: "LibERIOS"
+  subtitle: "Le journal anti-scroll"
+  motto: "Voir clair avant de voir l'écran."
+
+modules:
+  weather: true
+  calendar: true
+  tasks: true
+  news: true
+  tech: true
+  rss: true
+  games: true
+  tech_vocabulary: true
+  recommendations: false
+
+weather:
+  location: "Montpellier"
+  latitude: 43.6108
+  longitude: 3.8767
+
+calendar:
+  ics:
+    - name: "Outlook CHU"
+      source: "${OUTLOOK_ICS_URL}" # lien secret : dans .env en local, variable d'environnement dans le cloud
+  google:
+    enabled: false
+    calendar_id: "primary"
+    credentials_file: "${GOOGLE_CREDENTIALS_FILE}"
+    token_file: "${GOOGLE_TOKEN_FILE}"
+
+tasks:
+  priorities: []
+  reminders: []
+
+news:
+  limit: 18
+  max_age_hours: 72
+  feeds:
+    - name: "Le Quotidien du Médecin"
+      category: "Santé"
+      url: "https://www.lequotidiendumedecin.fr/rss.xml"
+    - name: "What's up doc"
+      category: "Santé"
+      url: "https://www.whatsupdoc-lemag.fr/rss.xml"
+    - name: "Mind Health"
+      category: "E-santé"
+      url: "https://www.mindhealth.fr/feed/"
+    - name: "DSIH"
+      category: "E-santé"
+      url: "https://www.dsih.fr/rss"
+    - name: "Midi Libre"
+      category: "Montpellier"
+      url: "https://www.midilibre.fr/herault/montpellier/rss.xml"
+    - name: "France 3 Occitanie"
+      category: "Montpellier"
+      url: "https://france3-regions.franceinfo.fr/occitanie/herault/montpellier/rss"
+    # Rubrique « Veille & curiosités » : seules les catégories Sciences / Culture y vont.
+    - name: "The Conversation"
+      category: "Sciences"
+      url: "https://theconversation.com/fr/articles.atom"
+    - name: "Inserm"
+      category: "Sciences"
+      url: "https://www.inserm.fr/feed/"
+    - name: "CNRS Le journal"
+      category: "Sciences"
+      url: "https://lejournal.cnrs.fr/rss"
+    - name: "Pour la Science"
+      category: "Sciences"
+      url: "https://www.pourlascience.fr/rss.xml"
+
+tech:
+  limit: 7
+  max_age_hours: 96
+  feeds:
+    - name: "ActuIA"
+      category: "IA"
+      url: "https://www.actuia.com/feed/"
+    - name: "Next"
+      category: "Tech"
+      url: "https://next.ink/feed/"
+    - name: "Numerama"
+      category: "Tech"
+      url: "https://www.numerama.com/feed/"
+    - name: "Blog du Modérateur"
+      category: "Tech"
+      url: "https://www.blogdumoderateur.com/feed/"
+    - name: "TLDR AI"
+      category: "IA"
+      url: "https://tldr.tech/api/rss/ai"
+
+recommendations: []
+personal:
+  greeting: "Bonjour Eve."
+  note: ""
+  free_window: ""
+  quote:
+    text: ""
+    author: ""
+
+printing:
+  printer: ""
+  duplex: false
